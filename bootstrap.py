@@ -10,7 +10,7 @@ RESELLER_USER, RESELLER_PASS, RESELLER_GB = "reseller", "reseller", 50
 CORE_NAME, NODE_NAME = "JinX-Core", "JinX-Core"
 PRO_GROUP, STD_GROUP = "جینکس پرو", "𝗝𝗶𝗻𝗫"   # 1 premium config / 4 different configs
 OLD_GROUP = "jinx-all"                         # from earlier versions, renamed to STD_GROUP (keeps its users)
-TITLE = os.getenv("CONFIG_TITLE", "جینکس | 𝙎𝙪𝙥𝙚𝙧 𝗝𝗶𝗻𝗫")   # shown after every config name
+TITLE = "AbyssTunnel🇳🇱"   # subscription profile title
 GB = 1024 ** 3
 DAY = 86400
 
@@ -340,6 +340,47 @@ def ensure_core():
                                     "exclude_inbound_tags": [], "fallbacks_inbound_tags": []})
     log("core created", c["id"]); return c["id"]
 
+def ensure_core_inbounds(core_id):
+    """Verify that PasarGuard exposes every configured inbound before users are created."""
+    expected = {i[0] for i in INBOUNDS}
+
+    def current_tags():
+        code, res = req("GET", "/api/inbounds")
+        if code == 401:
+            login()
+            code, res = req("GET", "/api/inbounds")
+        if code != 200:
+            return set()
+        if isinstance(res, list):
+            return {str(x) for x in res}
+        if isinstance(res, dict):
+            return {str(x) for x in (res.get("inbounds") or [])}
+        return set()
+
+    actual = current_tags()
+    if expected.issubset(actual):
+        log("core inbounds ready:", len(expected))
+        return
+
+    # The database may contain the Core while the panel's in-memory inbound
+    # index is stale. Re-apply the SAME Core once; no inbound settings change.
+    body = {"name": CORE_NAME, "config": CORE_CONFIG,
+            "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
+    code, res = req("PUT", f"/api/core/{core_id}?restart_nodes=false", body)
+    if code not in (200, 201):
+        raise RuntimeError(f"core inbound refresh failed {code}: {res}")
+
+    for _ in range(15):
+        actual = current_tags()
+        if expected.issubset(actual):
+            log("core inbound index refreshed:", len(expected))
+            return
+        time.sleep(1)
+
+    missing = sorted(expected - actual)
+    raise RuntimeError("PasarGuard still does not expose configured inbounds: " + ", ".join(missing))
+
+
 def ensure_node(core_id):
     api_key = open(f"{DATA}/node_api_key").read().strip()
     cert = open(f"{DATA}/node-certs/cert.pem").read().strip()
@@ -390,7 +431,7 @@ def ensure_hosts():
             req("DELETE", f"/api/host/{h['id']}")
     changed = 0
     for idx, (tag, proto, port, net, path, fp, name, grp) in enumerate(INBOUNDS):
-        body = {"remark": f"{name} | {TITLE}", "allowinsecure": False, "address": [DOMAIN], "inbound_tag": tag,
+        body = {"remark": TITLE, "allowinsecure": False, "address": [DOMAIN], "inbound_tag": tag,
                 "port": 443, "sni": [DOMAIN], "host": [DOMAIN], "path": path + EARLY_DATA, "security": "tls",
                 "alpn": ["http/1.1"], "fingerprint": fp, "priority": idx + 1, "is_disabled": False}
         mine = [h for h in existing if h.get("inbound_tag") == tag]
@@ -783,6 +824,7 @@ def main():
     t = admin_db(op="selftest")
     log("account tool (password change / owner access):", "ready" if t.get("ok") else "fallback mode")
     core_id = ensure_core()
+    ensure_core_inbounds(core_id)
     time.sleep(2)
     step("node", ensure_node, core_id)
     gid = None
