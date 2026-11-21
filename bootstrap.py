@@ -341,44 +341,38 @@ def ensure_core():
     log("core created", c["id"]); return c["id"]
 
 def ensure_core_inbounds(core_id):
-    """Verify that PasarGuard exposes every configured inbound before users are created."""
+    """Verify that the saved Core still contains all configured inbound tags."""
     expected = {i[0] for i in INBOUNDS}
-
-    def current_tags():
-        code, res = req("GET", "/api/inbounds")
-        if code == 401:
-            login()
-            code, res = req("GET", "/api/inbounds")
-        if code != 200:
-            return set()
-        if isinstance(res, list):
-            return {str(x) for x in res}
-        if isinstance(res, dict):
-            return {str(x) for x in (res.get("inbounds") or [])}
-        return set()
-
-    actual = current_tags()
+    code, core = req("GET", f"/api/core/{core_id}")
+    if code != 200 or not isinstance(core, dict):
+        raise RuntimeError(f"could not verify saved Core {core_id}: {code} {core}")
+    config = core.get("config") or {}
+    actual = {
+        str(item.get("tag"))
+        for item in config.get("inbounds", [])
+        if isinstance(item, dict) and item.get("tag")
+    }
     if expected.issubset(actual):
-        log("core inbounds ready:", len(expected))
+        log("core inbounds verified:", len(expected))
         return
 
-    # The database may contain the Core while the panel's in-memory inbound
-    # index is stale. Re-apply the SAME Core once; no inbound settings change.
+    # Repair only a missing/partial inbound list using the existing intended Core config.
     body = {"name": CORE_NAME, "config": CORE_CONFIG,
             "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
     code, res = req("PUT", f"/api/core/{core_id}?restart_nodes=false", body)
     if code not in (200, 201):
         raise RuntimeError(f"core inbound refresh failed {code}: {res}")
-
-    for _ in range(15):
-        actual = current_tags()
-        if expected.issubset(actual):
-            log("core inbound index refreshed:", len(expected))
-            return
-        time.sleep(1)
-
+    code, core = req("GET", f"/api/core/{core_id}")
+    config = (core or {}).get("config") or {}
+    actual = {
+        str(item.get("tag"))
+        for item in config.get("inbounds", [])
+        if isinstance(item, dict) and item.get("tag")
+    }
     missing = sorted(expected - actual)
-    raise RuntimeError("PasarGuard still does not expose configured inbounds: " + ", ".join(missing))
+    if missing:
+        raise RuntimeError("Core still missing configured inbounds: " + ", ".join(missing))
+    log("core inbound list repaired:", len(expected))
 
 
 def ensure_node(core_id):
