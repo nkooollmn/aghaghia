@@ -10,7 +10,7 @@ RESELLER_USER, RESELLER_PASS, RESELLER_GB = "reseller", "reseller", 50
 CORE_NAME, NODE_NAME = "JinX-Core", "JinX-Core"
 PRO_GROUP, STD_GROUP = "جینکس پرو", "𝗝𝗶𝗻𝗫"   # 1 premium config / 4 different configs
 OLD_GROUP = "jinx-all"                         # from earlier versions, renamed to STD_GROUP (keeps its users)
-TITLE = os.getenv("CONFIG_TITLE", "جینکس | 𝙎𝙪𝙥𝙚𝙧 𝗝𝗶𝗻𝗫")   # shown after every config name
+TITLE = "AbyssTunnel🇳🇱"   # subscription profile title
 GB = 1024 ** 3
 DAY = 86400
 
@@ -329,7 +329,13 @@ def ensure_core():
     for c in cores:
         if c.get("name") in (CORE_NAME, "jinx-core"):
             if c.get("name") == CORE_NAME and c.get("config") == CORE_CONFIG:
-                log("core ok (unchanged)", c["id"]); return c["id"]
+                # Re-register the already-saved inbound tags in PasarGuard's in-memory CoreManager.
+                # The config is unchanged; restart_nodes=false avoids restarting the node.
+                body = {"config": CORE_CONFIG}  # omit other fields so PasarGuard preserves their saved values
+                code, res = req("PUT", f"/api/core/{c['id']}?restart_nodes=false", body)
+                if code not in (200, 201):
+                    raise RuntimeError(f"core inbound registry refresh failed {code}: {res}")
+                log("core ok (inbound registry refreshed)", c["id"]); return c["id"]
             body = {"name": CORE_NAME, "config": CORE_CONFIG, "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
             code, res = req("PUT", f"/api/core/{c['id']}?restart_nodes=true", body)
             if code not in (200, 201):  # node may still be starting: save config without restart
@@ -390,7 +396,7 @@ def ensure_hosts():
             req("DELETE", f"/api/host/{h['id']}")
     changed = 0
     for idx, (tag, proto, port, net, path, fp, name, grp) in enumerate(INBOUNDS):
-        body = {"remark": f"{name} | {TITLE}", "allowinsecure": False, "address": [DOMAIN], "inbound_tag": tag,
+        body = {"remark": TITLE, "allowinsecure": False, "address": [DOMAIN], "inbound_tag": tag,
                 "port": 443, "sni": [DOMAIN], "host": [DOMAIN], "path": path + EARLY_DATA, "security": "tls",
                 "alpn": ["http/1.1"], "fingerprint": fp, "priority": idx + 1, "is_disabled": False}
         mine = [h for h in existing if h.get("inbound_tag") == tag]
