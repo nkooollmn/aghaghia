@@ -329,7 +329,13 @@ def ensure_core():
     for c in cores:
         if c.get("name") in (CORE_NAME, "jinx-core"):
             if c.get("name") == CORE_NAME and c.get("config") == CORE_CONFIG:
-                log("core ok (unchanged)", c["id"]); return c["id"]
+                # Re-register the already-saved inbound tags in PasarGuard's in-memory CoreManager.
+                # The config is unchanged; restart_nodes=false avoids restarting the node.
+                body = {"name": CORE_NAME, "config": CORE_CONFIG, "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
+                code, res = req("PUT", f"/api/core/{c['id']}?restart_nodes=false", body)
+                if code not in (200, 201):
+                    raise RuntimeError(f"core inbound registry refresh failed {code}: {res}")
+                log("core ok (inbound registry refreshed)", c["id"]); return c["id"]
             body = {"name": CORE_NAME, "config": CORE_CONFIG, "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
             code, res = req("PUT", f"/api/core/{c['id']}?restart_nodes=true", body)
             if code not in (200, 201):  # node may still be starting: save config without restart
@@ -339,41 +345,6 @@ def ensure_core():
     c = must("POST", "/api/core", {"name": CORE_NAME, "config": CORE_CONFIG,
                                     "exclude_inbound_tags": [], "fallbacks_inbound_tags": []})
     log("core created", c["id"]); return c["id"]
-
-def ensure_core_inbounds(core_id):
-    """Verify that the saved Core still contains all configured inbound tags."""
-    expected = {i[0] for i in INBOUNDS}
-    code, core = req("GET", f"/api/core/{core_id}")
-    if code != 200 or not isinstance(core, dict):
-        raise RuntimeError(f"could not verify saved Core {core_id}: {code} {core}")
-    config = core.get("config") or {}
-    actual = {
-        str(item.get("tag"))
-        for item in config.get("inbounds", [])
-        if isinstance(item, dict) and item.get("tag")
-    }
-    if expected.issubset(actual):
-        log("core inbounds verified:", len(expected))
-        return
-
-    # Repair only a missing/partial inbound list using the existing intended Core config.
-    body = {"name": CORE_NAME, "config": CORE_CONFIG,
-            "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
-    code, res = req("PUT", f"/api/core/{core_id}?restart_nodes=false", body)
-    if code not in (200, 201):
-        raise RuntimeError(f"core inbound refresh failed {code}: {res}")
-    code, core = req("GET", f"/api/core/{core_id}")
-    config = (core or {}).get("config") or {}
-    actual = {
-        str(item.get("tag"))
-        for item in config.get("inbounds", [])
-        if isinstance(item, dict) and item.get("tag")
-    }
-    missing = sorted(expected - actual)
-    if missing:
-        raise RuntimeError("Core still missing configured inbounds: " + ", ".join(missing))
-    log("core inbound list repaired:", len(expected))
-
 
 def ensure_node(core_id):
     api_key = open(f"{DATA}/node_api_key").read().strip()
@@ -818,7 +789,6 @@ def main():
     t = admin_db(op="selftest")
     log("account tool (password change / owner access):", "ready" if t.get("ok") else "fallback mode")
     core_id = ensure_core()
-    ensure_core_inbounds(core_id)
     time.sleep(2)
     step("node", ensure_node, core_id)
     gid = None
