@@ -448,10 +448,22 @@ def ensure_reseller_role(gids):
         roles = as_list(res, "roles")
         mine = [r for r in roles if r.get("name") == RESELLER_ROLE]
         if mine:
-            acc = mine[0].get("access") or {}
+            current = mine[0]
+            acc = current.get("access") or {}
+            permissions = current.get("permissions") or {}
+            group_permissions = permissions.get("groups") or {}
+            changes = {}
+            if group_permissions.get("read_simple") is not True:
+                permissions["groups"] = {**group_permissions, "read_simple": True}
+                changes["permissions"] = permissions
             if (sorted(acc.get("allowed_group_ids") or []) != role["access"]["allowed_group_ids"]
                     or acc.get("require_template") is not True):
-                req("PUT", f"{base}/{mine[0]['id']}", {"access": role["access"]})
+                changes["access"] = role["access"]
+            if changes:
+                code, res = req("PUT", f"{base}/{current['id']}", changes)
+                if code not in (200, 201):
+                    raise RuntimeError(f"reseller role repair failed {code}: {res}")
+                log("reseller role repaired")
             if not QUIET.get("role"): log("reseller role ready"); QUIET["role"] = True
             return
         code, res = req("POST", base, role)
