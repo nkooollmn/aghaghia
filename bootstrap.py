@@ -331,7 +331,7 @@ def ensure_core():
             if c.get("name") == CORE_NAME and c.get("config") == CORE_CONFIG:
                 # Re-register the already-saved inbound tags in PasarGuard's in-memory CoreManager.
                 # The config is unchanged; restart_nodes=false avoids restarting the node.
-                body = {"name": CORE_NAME, "config": CORE_CONFIG, "exclude_inbound_tags": [], "fallbacks_inbound_tags": []}
+                body = {"config": CORE_CONFIG}  # omit other fields so PasarGuard preserves their saved values
                 code, res = req("PUT", f"/api/core/{c['id']}?restart_nodes=false", body)
                 if code not in (200, 201):
                     raise RuntimeError(f"core inbound registry refresh failed {code}: {res}")
