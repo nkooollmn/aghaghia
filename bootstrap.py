@@ -361,6 +361,12 @@ def ensure_groups():
     """Two groups: PRO_GROUP -> the 1 Pro config, STD_GROUP -> the other 4. Returns {"pro": id, "std": id}."""
     want = {"pro": (PRO_GROUP, [i[0] for i in INBOUNDS if i[7] == "pro"]),
             "std": (STD_GROUP, [i[0] for i in INBOUNDS if i[7] == "std"])}
+    # Do not create groups until the CoreManager has registered every expected inbound.
+    available = set(must("GET", "/api/inbounds") or [])
+    expected = {tag for _, tags in want.values() for tag in tags}
+    missing = sorted(expected - available)
+    if missing:
+        raise RuntimeError("CoreManager is missing expected inbound tags: " + ", ".join(missing))
     groups = as_list(must("GET", "/api/groups"), "groups")
     by_name = {g.get("name"): g for g in groups}
     if STD_GROUP not in by_name and OLD_GROUP in by_name:      # upgrade: keep users of the old group
@@ -375,6 +381,12 @@ def ensure_groups():
         else:
             g = must("POST", "/api/group", {"name": name, "inbound_tags": tags}); ids[key] = g["id"]
             log("group created:", name, f"({len(tags)} config)")
+    # Verify through the exact lightweight endpoint used by the create-user dropdown.
+    visible = as_list(must("GET", "/api/groups/simple?all=true"), "groups")
+    visible_ids = {g.get("id") for g in visible}
+    missing_ids = sorted(set(ids.values()) - visible_ids)
+    if missing_ids:
+        raise RuntimeError("Groups exist but are missing from /api/groups/simple: " + ", ".join(map(str, missing_ids)))
     return ids
 
 QUIET = {}
